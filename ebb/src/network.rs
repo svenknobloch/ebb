@@ -10,14 +10,12 @@ use crate::{Ports, Process, NETWORK};
 #[derive(Copy, Clone)]
 pub struct NetworkConfig {
     pub buffer_size: usize,
-    pub num_threads: usize,
 }
 
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             buffer_size: 64,
-            num_threads: num_cpus::get(),
         }
     }
 }
@@ -39,36 +37,16 @@ impl NetworkBuilder {
     }
 
     pub fn build(self) -> Network {
-        let (tx, rx) = unbounded();
+        let (shutdown_tx, shutdown_rx) = unbounded();
 
         let network = Network {
             config: self.config,
             exec_local: Default::default(),
             exec: Default::default(),
             active: Default::default(),
-            shutdown_tx: tx,
-            shutdown_rx: rx,
+            shutdown_tx,
+            shutdown_rx,
         };
-
-        (0..self.config.num_threads - 1).for_each(|_| {
-            let exec = network.exec.clone();
-            let tx = network.shutdown_tx.clone();
-            let rx = network.shutdown_rx.clone();
-            let config = self.config;
-            let active = network.active.clone();
-
-            std::thread::spawn(move || {
-                Network {
-                    config,
-                    exec_local: Default::default(),
-                    exec,
-                    active,
-                    shutdown_tx: tx,
-                    shutdown_rx: rx,
-                }
-                .complete()
-            });
-        });
 
         network
     }
@@ -100,14 +78,29 @@ impl Network {
         Default::default()
     }
 
-    pub fn install(self) {
-        NETWORK.with(|cell| {
-            *cell.borrow_mut() = self;
-        });
-    }
-
     pub fn config(&self) -> &NetworkConfig {
         &self.config
+    }
+
+    pub fn add_threads(&self, num: usize) {
+        (0..num).for_each(|_| {
+            let exec = self.exec.clone();
+            let shutdown_tx = self.shutdown_tx.clone();
+            let shutdown_rx = self.shutdown_rx.clone();
+            let config = self.config;
+            let active = self.active.clone();
+
+            std::thread::spawn(move || {
+                Network {
+                    config,
+                    exec_local: Default::default(),
+                    exec,
+                    active,
+                    shutdown_tx,
+                    shutdown_rx,
+                }.complete()
+            });
+        });
     }
 
     pub fn spawn_local_process<P>(&self, process: P) -> Arc<<P::Ports as Ports>::Handle>
@@ -174,15 +167,25 @@ impl Network {
         self.exec.spawn(task)
     }
 
+    pub fn enter<T, F: FnOnce() -> T>(&self, f: F) -> T {
+        NETWORK.set(self, f)
+    }
+
     pub fn tick(&self) -> bool {
-        self.exec_local.try_tick() || self.exec.try_tick()
+        NETWORK.set(self, || {
+            self.exec_local.try_tick() || self.exec.try_tick()
+        })
     }
 
     pub fn run<T>(&self, f: impl Future<Output = T>) -> T {
-        smol::block_on(self.exec_local.run(self.exec.run(f)))
+        NETWORK.set(self, || {
+            smol::block_on(self.exec_local.run(self.exec.run(f)))
+        })
     }
 
-    pub fn complete(&self) {
-        smol::block_on(self.exec_local.run(self.exec.run(self.shutdown_rx.recv()))).ok();
+    pub fn complete(self) {
+        NETWORK.set(&self, || {
+            smol::block_on(self.exec_local.run(self.exec.run(self.shutdown_rx.recv()))).ok();
+        })
     }
 }

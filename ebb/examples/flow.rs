@@ -4,7 +4,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use ebb::components::Interval;
-use ebb::{Process, Receiver};
+use ebb::{Network, Process, Receiver};
 
 use futures::StreamExt;
 
@@ -22,20 +22,25 @@ impl Process for SampleProcess {
     fn execute(self, mut ports: Self::Ports) -> Self::ExecFuture {
         async move {
             while let Some((tick, elapsed)) = ports.interval.next().await {
-                println!("Tick from Sample {} ({:?}, {:?})", self.0, tick, elapsed);
+                println!("Tick from Sample {} ({:?}, {:?}, {:?})", self.0, tick, elapsed, std::thread::current());
             }
         }
     }
 }
 
 pub fn main() {
-    let interval_handle =
-        ebb::spawn_local_process(Interval::new(None, Duration::from_millis(1000)));
-    let sample1_handle = ebb::spawn_local_process(SampleProcess(1));
-    let sample2_handle = ebb::spawn_local_process(SampleProcess(2));
+    let network = Network::default();
 
-    interval_handle.output.connect(&sample1_handle.interval);
-    interval_handle.output.connect(&sample2_handle.interval);
+    network.enter(|| {
+        let interval_handle =
+            ebb::spawn_process(Interval::new(None, Duration::from_millis(1000)));
+        let sample1_handle = ebb::spawn_process(SampleProcess(1));
+        let sample2_handle = ebb::spawn_process(SampleProcess(2));
+    
+        interval_handle.output.connect(&sample1_handle.interval);
+        interval_handle.output.connect(&sample2_handle.interval);
+    });
 
-    ebb::complete();
+    network.add_threads(1);
+    network.complete();
 }
