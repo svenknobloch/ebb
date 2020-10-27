@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use futures::SinkExt;
 use smol::Timer as TimerFuture;
 
-use crate::{Broadcast, Network, Process};
+use crate::{Broadcast, Process};
 
 #[derive(crate::Ports)]
 pub struct Ports {
@@ -27,7 +27,7 @@ impl Process for Interval {
 
     type ExecFuture = impl Future<Output = ()>;
 
-    fn execute(self, _: &Network, mut ports: Self::Ports) -> Self::ExecFuture {
+    fn execute(self, mut ports: Self::Ports) -> Self::ExecFuture {
         async move {
             let mut prev = Instant::now();
 

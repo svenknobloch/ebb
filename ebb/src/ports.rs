@@ -1,23 +1,22 @@
 use std::any::Any;
 
-use crate::Network;
+use crate::NetworkConfig;
 
 pub trait Ports: Sized {
     type Handle: Any;
 
-    fn with_handle(network: &Network) -> (Self, Self::Handle);
-}
-
-impl<'a> From<&'a Network> for () {
-    fn from(_: &'a Network) -> Self {
-        ()
-    }
+    fn handle(&self) -> Self::Handle;
+    fn create(config: &NetworkConfig) -> Self;
 }
 
 impl Ports for () {
     type Handle = ();
 
-    fn with_handle(_: &Network) -> (Self, Self::Handle) {
-        ((), ())
+    fn handle(&self) -> Self::Handle {
+        Default::default()
+    }
+
+    fn create(_: &NetworkConfig) -> Self {
+        Default::default()
     }
 }

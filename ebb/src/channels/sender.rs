@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 
 use futures::Sink;
 
-use crate::{Channel, Network, Ports, ReceiverHandle, SendError};
+use crate::{Channel, NetworkConfig, Ports, ReceiverHandle, SendError};
 
 #[derive(Debug)]
 pub struct SenderHandle<T> {
@@ -20,7 +20,8 @@ impl<T> SenderHandle<T> {
 
 #[derive(Debug)]
 pub struct Sender<T> {
-    ctrl: StdReceiver<Arc<Channel<T>>>,
+    ctrl_tx: StdSender<Arc<Channel<T>>>,
+    ctrl_rx: StdReceiver<Arc<Channel<T>>>,
     tx: Option<Arc<Channel<T>>>,
 }
 
@@ -32,8 +33,8 @@ impl<T> Sender<T> {
 
 impl<T> Default for Sender<T> {
     fn default() -> Self {
-        let (_, ctrl) = channel();
-        Self { ctrl, tx: None }
+        let (ctrl_tx, ctrl_rx) = channel();
+        Self { ctrl_tx, ctrl_rx, tx: None }
     }
 }
 
@@ -44,7 +45,7 @@ impl<T> Sink<T> for Sender<T> {
         let inner = &mut *self;
 
         // Update sender
-        if let Some(tx) = inner.ctrl.try_iter().last() {
+        if let Some(tx) = inner.ctrl_rx.try_iter().last() {
             inner.tx = Some(tx);
         }
 
@@ -91,15 +92,17 @@ impl<T> Sink<T> for Sender<T> {
 impl<T: 'static> Ports for Sender<T> {
     type Handle = SenderHandle<T>;
 
-    fn with_handle(_: &Network) -> (Self, Self::Handle) {
+    fn handle(&self) -> Self::Handle {
+        Self::Handle { ctrl: self.ctrl_tx.clone() }
+    }
+
+    fn create(_: &NetworkConfig) -> Self {
         let (ctrl_tx, ctrl_rx) = channel();
 
-        (
-            Self {
-                ctrl: ctrl_rx,
-                tx: None,
-            },
-            Self::Handle { ctrl: ctrl_tx },
-        )
+        Self {
+            ctrl_tx,
+            ctrl_rx,
+            tx: None,
+        }
     }
 }

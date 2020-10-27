@@ -10,5 +10,6 @@ edition = "2018"
 futures = "~0.3"
 smol = "~1.2"
 crossbeam-queue = "~0.3"
+num_cpus = "^1"
 
 ebb-macros = { path = "../ebb-macros" }

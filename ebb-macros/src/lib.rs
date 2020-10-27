@@ -48,8 +48,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let values = fields
             .iter()
             .map(|(ident, ty)| {
-                let handle = format_ident!("{}_handle", ident);
-                quote! { let (#ident, #handle) = <#ty as ::ebb::Ports>::with_handle(network); }
+                quote! { let #ident = <#ty as ::ebb::Ports>::create(config); }
             })
             .collect::<TokenStream>();
 
@@ -63,8 +62,7 @@ pub fn derive(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let handle_values = fields
             .iter()
             .map(|(ident, _)| {
-                let handle = format_ident!("{}_handle", ident);
-                quote! { #ident: #handle, }
+                quote! { #ident: ::ebb::Ports::handle(&self.#ident), }
             })
             .collect::<TokenStream>();
 
@@ -77,17 +75,18 @@ pub fn derive(tokens: proc_macro::TokenStream) -> proc_macro::TokenStream {
             impl #gen_impl ::ebb::Ports for #ident #gen_type #gen_where {
                 type Handle = #handle_ident #gen_type;
 
-                fn with_handle(network: &::ebb::Network) -> (Self, Self::Handle) {
+                fn handle(&self) -> Self::Handle {
+                    Self::Handle {
+                        #handle_values
+                    }
+                }
+
+                fn create(config: &::ebb::NetworkConfig) -> Self {
                     #values
 
-                    (
-                        Self {
-                            #ports_values
-                        },
-                        Self::Handle {
-                            #handle_values
-                        }
-                    )
+                    Self {
+                        #ports_values
+                    }
                 }
             }
         })

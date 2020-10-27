@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 
 use futures::Stream;
 
-use crate::{Channel, Network, Ports};
+use crate::{Channel, NetworkConfig, Ports};
 
 #[derive(Debug)]
 pub struct ReceiverHandle<T> {
@@ -45,15 +45,16 @@ impl<T> Stream for Receiver<T> {
 impl<T: 'static> Ports for Receiver<T> {
     type Handle = ReceiverHandle<T>;
 
-    fn with_handle(_: &Network) -> (Self, Self::Handle) {
-        let channel = Arc::new(Channel::with_capacity(32));
+    fn handle(&self) -> Self::Handle {
+        Self::Handle { channel: self.channel.clone() }
+    }
 
-        (
-            Self {
-                channel: channel.clone(),
-            },
-            Self::Handle { channel },
-        )
+    fn create(config: &NetworkConfig) -> Self {
+        let channel = Arc::new(Channel::with_capacity(config.buffer_size));
+
+        Self {
+            channel: channel.clone(),
+        }
     }
 }
 

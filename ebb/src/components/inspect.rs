@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use futures::{SinkExt, StreamExt};
 
-use crate::{Network, Process, Receiver, Sender};
+use crate::{Process, Receiver, Sender};
 
 #[derive(crate::Ports)]
 pub struct Ports<T: 'static> {
@@ -36,7 +36,7 @@ where
 
     type ExecFuture = impl Future<Output = ()>;
 
-    fn execute(self, _: &Network, mut ports: Self::Ports) -> Self::ExecFuture {
+    fn execute(self, mut ports: Self::Ports) -> Self::ExecFuture {
         async move {
             while let Some(value) = ports.input.next().await {
                 (self.f)(&value);

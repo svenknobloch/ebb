@@ -1,109 +1,188 @@
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use futures::task::AtomicWaker;
+use smol::channel::{unbounded, Receiver, Sender};
 use smol::{Executor, LocalExecutor, Task};
 
-use crate::{Ports, Process};
+use crate::{Ports, Process, NETWORK};
 
-#[derive(Clone, Default)]
-pub struct NetworkStatus {
-    waker: Arc<AtomicWaker>,
-    process_count: Arc<AtomicUsize>,
+#[derive(Copy, Clone)]
+pub struct NetworkConfig {
+    pub buffer_size: usize,
+    pub num_threads: usize,
 }
 
-impl Future for NetworkStatus {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.waker.register(cx.waker());
-
-        if self.process_count.load(Ordering::Acquire) == 0 {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            buffer_size: 64,
+            num_threads: num_cpus::get(),
         }
     }
 }
 
 #[derive(Default)]
+pub struct NetworkBuilder {
+    config: NetworkConfig,
+}
+
+impl NetworkBuilder {
+    pub fn buffer_size(mut self, buffer_size: usize) -> Self {
+        self.config.buffer_size = buffer_size;
+        self
+    }
+
+    pub fn num_threads(mut self, num_threads: usize) -> Self {
+        self.config.buffer_size = num_threads;
+        self
+    }
+
+    pub fn build(self) -> Network {
+        let (tx, rx) = unbounded();
+
+        let network = Network {
+            config: self.config,
+            exec_local: Default::default(),
+            exec: Default::default(),
+            active: Default::default(),
+            shutdown_tx: tx,
+            shutdown_rx: rx,
+        };
+
+        (0..self.config.num_threads - 1).for_each(|_| {
+            let exec = network.exec.clone();
+            let tx = network.shutdown_tx.clone();
+            let rx = network.shutdown_rx.clone();
+            let config = self.config;
+            let active = network.active.clone();
+
+            std::thread::spawn(move || {
+                Network {
+                    config,
+                    exec_local: Default::default(),
+                    exec,
+                    active,
+                    shutdown_tx: tx,
+                    shutdown_rx: rx,
+                }
+                .complete()
+            });
+        });
+
+        network
+    }
+}
+
 pub struct Network {
-    exec_local: Arc<LocalExecutor<'static>>,
+    config: NetworkConfig,
+    exec_local: LocalExecutor<'static>,
     exec: Arc<Executor<'static>>,
-    status: NetworkStatus,
+    active: Arc<AtomicUsize>,
+    shutdown_tx: Sender<()>,
+    shutdown_rx: Receiver<()>,
+}
+
+impl Drop for Network {
+    fn drop(&mut self) {
+        self.shutdown_tx.close();
+    }
+}
+
+impl Default for Network {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl Network {
-    pub fn spawn_local<P>(&mut self, process: P) -> Arc<<P::Ports as Ports>::Handle>
+    pub fn builder() -> NetworkBuilder {
+        Default::default()
+    }
+
+    pub fn install(self) {
+        NETWORK.with(|cell| {
+            *cell.borrow_mut() = self;
+        });
+    }
+
+    pub fn config(&self) -> &NetworkConfig {
+        &self.config
+    }
+
+    pub fn spawn_local_process<P>(&self, process: P) -> Arc<<P::Ports as Ports>::Handle>
     where
         P: Process,
         P::ExecFuture: 'static,
     {
-        let (ports, handle) = <P::Ports as Ports>::with_handle(&self);
+        let ports = <P::Ports as Ports>::create(self.config());
+        let handle = ports.handle();
 
-        let status = self.status.clone();
-        let future = process.execute(&self, ports);
-        status.process_count.fetch_add(1, Ordering::AcqRel);
+        let shutdown = self.shutdown_tx.clone();
+        let active = self.active.clone();
+        let future = process.execute(ports);
+        active.fetch_add(1, Ordering::AcqRel);
 
         self.exec_local
             .spawn(async move {
                 future.await;
-                status.process_count.fetch_sub(1, Ordering::AcqRel);
-                status.waker.wake();
+                if active.fetch_sub(1, Ordering::AcqRel) == 0 {
+                    shutdown.close();
+                }
             })
             .detach();
 
         Arc::new(handle)
     }
 
-    pub fn spawn<P>(&mut self, process: P) -> Arc<<P::Ports as Ports>::Handle>
+    pub fn spawn_process<P>(&self, process: P) -> Arc<<P::Ports as Ports>::Handle>
     where
         P: Process,
         P::ExecFuture: Send + 'static,
     {
-        let (ports, handle) = <P::Ports as Ports>::with_handle(&self);
+        let ports = <P::Ports as Ports>::create(self.config());
+        let handle = ports.handle();
 
-        let status = self.status.clone();
-        let future = process.execute(&self, ports);
-        status.process_count.fetch_add(1, Ordering::AcqRel);
+        let shutdown = self.shutdown_tx.clone();
+        let active = self.active.clone();
+        let future = process.execute(ports);
+        active.fetch_add(1, Ordering::AcqRel);
 
         self.exec
             .spawn(async move {
                 future.await;
-                status.process_count.fetch_sub(1, Ordering::AcqRel);
-                status.waker.wake();
+                if active.fetch_sub(1, Ordering::AcqRel) == 0 {
+                    shutdown.close();
+                }
             })
             .detach();
 
         Arc::new(handle)
     }
 
-    pub fn spawn_task_local<F, T: 'static>(&mut self, task: F) -> Task<T>
+    pub fn spawn_local_task<F, T: 'static>(&self, task: F) -> Task<T>
     where
         F: Future<Output = T> + 'static,
     {
         self.exec_local.spawn(task)
     }
 
-    pub fn spawn_task<F, T: Send + 'static>(&mut self, task: F) -> Task<T>
+    pub fn spawn_task<F, T: Send + 'static>(&self, task: F) -> Task<T>
     where
         F: Future<Output = T> + Send + 'static,
     {
         self.exec.spawn(task)
     }
 
-    pub fn tick(&self) {
-        while self.exec_local.try_tick() || self.exec.try_tick() {}
+    pub fn tick(&self) -> bool {
+        self.exec_local.try_tick() || self.exec.try_tick()
     }
 
     pub fn run<T>(&self, f: impl Future<Output = T>) -> T {
         smol::block_on(self.exec_local.run(self.exec.run(f)))
     }
 
-    pub fn execute(self) {
-        smol::block_on(self.exec_local.run(self.exec.run(self.status.clone())));
+    pub fn complete(&self) {
+        smol::block_on(self.exec_local.run(self.exec.run(self.shutdown_rx.recv()))).ok();
     }
 }
