@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use futures::Stream;
+use futures::stream::{Stream, FusedStream};
 
 use crate::{Channel, NetworkConfig, Ports};
 
@@ -26,19 +26,29 @@ impl<T> Stream for Receiver<T> {
     type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(item) = self.channel.pop() {
-            self.channel.wake_tx();
-            Poll::Ready(Some(item))
-        } else {
-            self.channel.register_rx_waker(cx.waker());
-
+        if !self.channel.is_closed() {
             if let Some(item) = self.channel.pop() {
                 self.channel.wake_tx();
                 Poll::Ready(Some(item))
             } else {
-                Poll::Pending
+                self.channel.register_rx_waker(cx.waker());
+    
+                if let Some(item) = self.channel.pop() {
+                    self.channel.wake_tx();
+                    Poll::Ready(Some(item))
+                } else {
+                    Poll::Pending
+                }
             }
+        } else {
+            Poll::Ready(None)
         }
+    }
+}
+
+impl<T> FusedStream for Receiver<T> {
+    fn is_terminated(&self) -> bool {
+        self.channel.is_closed()
     }
 }
 
