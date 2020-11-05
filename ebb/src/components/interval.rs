@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 use futures::SinkExt;
 use smol::Timer as TimerFuture;
 
-use crate::{Broadcast, Process};
+use crate::{Broadcaster, Process};
 
 #[derive(crate::Ports)]
 pub struct Ports {
-    output: Broadcast<(Instant, Duration)>,
+    output: Broadcaster<(Instant, Duration)>,
 }
 
 pub struct Interval {

@@ -32,13 +32,13 @@ pub fn main() {
     let network = Network::default();
 
     network.enter(|| {
-        let interval_handle =
+        let interval =
             ebb::spawn_process(Interval::new(None, Duration::from_millis(1000)));
-        let sample1_handle = ebb::spawn_process(SampleProcess(1));
-        let sample2_handle = ebb::spawn_process(SampleProcess(2));
+        let sample1 = ebb::spawn_process(SampleProcess(1));
+        let sample2 = ebb::spawn_process(SampleProcess(2));
     
-        interval_handle.output.connect(&sample1_handle.interval);
-        interval_handle.output.connect(&sample2_handle.interval);
+        &interval.output >> &sample1.interval;
+        &interval.output >> &sample2.interval;
     });
 
     network.add_threads(1);

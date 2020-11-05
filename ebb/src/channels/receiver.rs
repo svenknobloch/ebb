@@ -22,6 +22,12 @@ pub struct Receiver<T> {
     channel: Arc<Channel<T>>,
 }
 
+impl<T> Receiver<T> {
+    pub(crate) fn channel(&self) -> &Arc<Channel<T>> {
+        &self.channel
+    }
+}
+
 impl<T> Stream for Receiver<T> {
     type Item = T;
 

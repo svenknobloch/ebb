@@ -2,18 +2,29 @@ use std::pin::Pin;
 use std::sync::mpsc::{channel, Receiver as StdReceiver, Sender as StdSender};
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::ops::Shr;
 
 use futures::Sink;
 
-use crate::{Channel, NetworkConfig, Ports, ReceiverHandle, SendError};
+use crate::{Channel, NetworkConfig, Ports, ReceiverHandle, Receiver, SendError};
 
 #[derive(Debug)]
 pub struct SenderHandle<T> {
     ctrl: StdSender<Arc<Channel<T>>>,
 }
 
-impl<T> SenderHandle<T> {
-    pub fn connect(&self, rx: &ReceiverHandle<T>) {
+impl<T: Clone> Shr<&ReceiverHandle<T>> for &SenderHandle<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
+        self.ctrl.send(rx.channel().clone()).ok();
+    }
+}
+
+impl<T: Clone> Shr<&Receiver<T>> for &SenderHandle<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &Receiver<T>) -> Self::Output {
         self.ctrl.send(rx.channel().clone()).ok();
     }
 }
@@ -25,8 +36,18 @@ pub struct Sender<T> {
     tx: Option<Arc<Channel<T>>>,
 }
 
-impl<T> Sender<T> {
-    pub fn connect(&mut self, rx: &ReceiverHandle<T>) {
+impl<T: Clone> Shr<&ReceiverHandle<T>> for &mut Sender<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
+        self.tx = Some(rx.channel().clone());
+    }
+}
+
+impl<T: Clone> Shr<&Receiver<T>> for &mut Sender<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &Receiver<T>) -> Self::Output {
         self.tx = Some(rx.channel().clone());
     }
 }

@@ -2,18 +2,29 @@ use std::pin::Pin;
 use std::sync::mpsc::{channel, Receiver as StdReceiver, Sender as StdSender};
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::ops::Shr;
 
 use futures::Sink;
 
-use crate::{Channel, NetworkConfig, Ports, ReceiverHandle, SendError};
+use crate::{Channel, NetworkConfig, Ports, ReceiverHandle, Receiver, SendError};
 
 #[derive(Debug)]
-pub struct BroadcastHandle<T: Clone> {
+pub struct BroadcasterHandle<T: Clone> {
     ctrl: StdSender<Arc<Channel<T>>>,
 }
 
-impl<T: Clone> BroadcastHandle<T> {
-    pub fn connect(&self, rx: &ReceiverHandle<T>) {
+impl<T: Clone> Shr<&ReceiverHandle<T>> for &BroadcasterHandle<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
+        self.ctrl.send(rx.channel().clone()).ok();
+    }
+}
+
+impl<T: Clone> Shr<&Receiver<T>> for &BroadcasterHandle<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &Receiver<T>) -> Self::Output {
         self.ctrl.send(rx.channel().clone()).ok();
     }
 }
@@ -21,13 +32,29 @@ impl<T: Clone> BroadcastHandle<T> {
 // TODO: fix issues on sending to full channel
 
 #[derive(Debug)]
-pub struct Broadcast<T: Clone> {
+pub struct Broadcaster<T: Clone> {
     ctrl_tx: StdSender<Arc<Channel<T>>>,
     ctrl_rx: StdReceiver<Arc<Channel<T>>>,
     channels: Vec<Arc<Channel<T>>>,
 }
 
-impl<T: Clone> Default for Broadcast<T> {
+impl<T: Clone> Shr<&ReceiverHandle<T>> for &mut Broadcaster<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
+        self.channels.push(rx.channel().clone());
+    }
+}
+
+impl<T: Clone> Shr<&Receiver<T>> for &mut Broadcaster<T> {
+    type Output = ();
+    
+    fn shr(self, rx: &Receiver<T>) -> Self::Output {
+        self.channels.push(rx.channel().clone());
+    }
+}
+
+impl<T: Clone> Default for Broadcaster<T> {
     fn default() -> Self {
         let (ctrl_tx, ctrl_rx) = channel();
 
@@ -39,7 +66,7 @@ impl<T: Clone> Default for Broadcast<T> {
     }
 }
 
-impl<T: Clone> Sink<T> for Broadcast<T> {
+impl<T: Clone> Sink<T> for Broadcaster<T> {
     type Error = SendError<T>;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -86,8 +113,8 @@ impl<T: Clone> Sink<T> for Broadcast<T> {
     }
 }
 
-impl<T: Clone + 'static> Ports for Broadcast<T> {
-    type Handle = BroadcastHandle<T>;
+impl<T: Clone + 'static> Ports for Broadcaster<T> {
+    type Handle = BroadcasterHandle<T>;
 
     fn handle(&self) -> Self::Handle {
         Self::Handle { ctrl: self.ctrl_tx.clone() }
