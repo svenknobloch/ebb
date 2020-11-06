@@ -13,7 +13,7 @@ pub struct SenderHandle<T> {
     ctrl: StdSender<Arc<Channel<T>>>,
 }
 
-impl<T: Clone> Shr<&ReceiverHandle<T>> for &SenderHandle<T> {
+impl<T> Shr<&ReceiverHandle<T>> for &SenderHandle<T> {
     type Output = ();
     
     fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
@@ -21,7 +21,7 @@ impl<T: Clone> Shr<&ReceiverHandle<T>> for &SenderHandle<T> {
     }
 }
 
-impl<T: Clone> Shr<&Receiver<T>> for &SenderHandle<T> {
+impl<T> Shr<&Receiver<T>> for &SenderHandle<T> {
     type Output = ();
     
     fn shr(self, rx: &Receiver<T>) -> Self::Output {
@@ -36,7 +36,7 @@ pub struct Sender<T> {
     tx: Option<Arc<Channel<T>>>,
 }
 
-impl<T: Clone> Shr<&ReceiverHandle<T>> for &mut Sender<T> {
+impl<T> Shr<&ReceiverHandle<T>> for &mut Sender<T> {
     type Output = ();
     
     fn shr(self, rx: &ReceiverHandle<T>) -> Self::Output {
@@ -44,7 +44,7 @@ impl<T: Clone> Shr<&ReceiverHandle<T>> for &mut Sender<T> {
     }
 }
 
-impl<T: Clone> Shr<&Receiver<T>> for &mut Sender<T> {
+impl<T> Shr<&Receiver<T>> for &mut Sender<T> {
     type Output = ();
     
     fn shr(self, rx: &Receiver<T>) -> Self::Output {
